@@ -8,16 +8,23 @@ from streamlit_calendar import calendar
 from streamlit_lightweight_charts import renderLightweightCharts
 import io
 
-# --- 1. SETTINGS ---
+# --- 1. APP CONFIG & STYLE ---
 st.set_page_config(page_title="AlphaZella Pro", layout="wide")
 
-# --- 2. DATA PROCESSING ---
+st.markdown("""
+    <style>
+    [data-testid="stMetricValue"] { font-size: 1.8rem; color: #00ffcc; }
+    .stPlotlyChart { border: 1px solid #30363d; border-radius: 10px; }
+    </style>
+    """, unsafe_allow_html=True)
+
+# --- 2. ROBUST DATA ENGINE ---
 @st.cache_data
 def process_data(uploaded_file):
     if uploaded_file:
         df = pd.read_csv(uploaded_file)
     else:
-        # Default Mock Data
+        # Initial Demo Data
         data = {
             "Date": ["2025-11-03", "2025-11-07", "2025-11-12", "2025-12-10", "2026-01-05"],
             "Ticker": ["AAPL", "TSLA", "NVDA", "META", "BTC"],
@@ -30,9 +37,11 @@ def process_data(uploaded_file):
         }
         df = pd.DataFrame(data)
 
+    # Standardize column headers
     df.columns = df.columns.str.strip()
     df['Date'] = pd.to_datetime(df['Date'])
     
+    # Auto-calculate P&L if missing
     if "P&L" not in df.columns:
         mult = np.where(df["Type"].str.strip().str.capitalize() == "Long", 1, -1)
         df["P&L"] = (df["Exit"] - df["Entry"]) * df["Quantity"] * mult
@@ -40,90 +49,110 @@ def process_data(uploaded_file):
     df["Status"] = np.where(df["P&L"] > 0, "Win", "Loss")
     return df
 
-# --- 3. SIDEBAR & EXPORT LOGIC ---
+# --- 3. SIDEBAR & EXPORT ---
 st.sidebar.title("💎 AlphaZella Pro")
-file = st.sidebar.file_uploader("Upload CSV", type="csv")
+file = st.sidebar.file_uploader("Upload Trade CSV", type="csv")
 df = process_data(file)
 
-# Export Function
-def to_excel(df):
+def to_excel(df_to_export):
     output = io.BytesIO()
+    df_clean = df_to_export.copy()
+    df_clean['Date'] = df_clean['Date'].dt.strftime('%Y-%m-%d')
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_sheet = df.to_excel(writer, index=False, sheet_name='Trade_Log')
-        # Summary Sheet
-        summary = df.groupby("Ticker")["P&L"].sum().reset_index()
-        summary.to_excel(writer, index=False, sheet_name='Summary_By_Ticker')
+        df_clean.to_excel(writer, index=False, sheet_name='TradeLog')
+        summary = df_to_export.groupby("Ticker")["P&L"].sum().reset_index()
+        summary.to_excel(writer, index=False, sheet_name='TickerSummary')
     return output.getvalue()
 
 st.sidebar.download_button(
-    label="📥 Download Excel Report",
+    label="📥 Export to Excel",
     data=to_excel(df),
-    file_name=f"Trading_Report_{datetime.now().strftime('%Y-%m-%d')}.xlsx",
+    file_name=f"Trading_Journal_{datetime.now().strftime('%Y-%m-%d')}.xlsx",
     mime="application/vnd.ms-excel"
 )
 
-menu = st.sidebar.radio("Navigate", ["Dashboard", "Calendar", "Trade Log", "Trade Analysis", "Deep Statistics"])
+menu = st.sidebar.radio("Navigation", ["Dashboard", "Calendar", "Trade Log", "Trade Analysis", "Deep Statistics"])
 
-# --- 4. NAVIGATION PAGES ---
+# --- 4. NAVIGATION LOGIC ---
 
 if menu == "Dashboard":
     st.title("Performance Dashboard")
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Net P&L", f"${df['P&L'].sum():,.2f}")
-    win_rate = (len(df[df['P&L']>0])/len(df)*100)
+    win_rate = (len(df[df['P&L']>0])/len(df)*100) if len(df)>0 else 0
     c2.metric("Win Rate", f"{win_rate:.1f}%")
     c3.metric("Total Trades", len(df))
     c4.metric("Avg Trade", f"${df['P&L'].mean():.2f}")
     
+    st.subheader("Account Equity Curve")
     df_sorted = df.sort_values("Date")
     df_sorted["Cum_PL"] = df_sorted["P&L"].cumsum()
-    st.plotly_chart(px.area(df_sorted, x="Date", y="Cum_PL", title="Equity Curve", template="plotly_dark"), use_container_width=True)
+    fig = px.area(df_sorted, x="Date", y="Cum_PL", template="plotly_dark", color_discrete_sequence=['#00ffcc'])
+    st.plotly_chart(fig, use_container_width=True)
 
 elif menu == "Calendar":
-    st.title("Daily P&L Calendar")
+    st.title("Daily P&L Tracker")
     daily_pl = df.groupby(df['Date'].dt.date)['P&L'].sum().reset_index()
-    events = [{"title": f"${r['P&L']:.0f}", "start": str(r['Date']), 
-               "backgroundColor": "#2ecc71" if r['P&L'] >= 0 else "#e74c3c", "allDay": True} 
-              for _, r in daily_pl.iterrows()]
+    events = []
+    for _, row in daily_pl.iterrows():
+        color = "#2ecc71" if row['P&L'] >= 0 else "#e74c3c"
+        events.append({
+            "title": f"${row['P&L']:.0f}",
+            "start": str(row['Date']),
+            "backgroundColor": color,
+            "borderColor": color,
+            "allDay": True
+        })
     calendar(events=events, options={"initialView": "dayGridMonth"})
 
 elif menu == "Trade Log":
     st.title("Full Trade History")
-    st.write("You can click column headers to sort your trades.")
     st.dataframe(df.sort_values("Date", ascending=False), use_container_width=True, hide_index=True)
 
 elif menu == "Trade Analysis":
-    st.title("Interactive Trade Review")
+    st.title("Technical Trade Review")
     ticker = st.selectbox("Select Ticker", df["Ticker"].unique())
     trade = df[df["Ticker"] == ticker].iloc[-1]
     
+    # Ticker format fix for Crypto
+    yf_ticker = f"{ticker}-USD" if ticker in ["BTC", "ETH", "SOL"] else ticker
+    
     try:
-        h = yf.download(ticker, start=trade['Date']-timedelta(days=20), end=trade['Date']+timedelta(days=10))
-        if isinstance(h.columns, pd.MultiIndex): h.columns = h.columns.get_level_values(0)
-        h = h.reset_index()
-        h.columns = [str(c).lower() for c in h.columns]
-        chart_data = h.rename(columns={'date': 'time'}).to_dict('records')
+        start_date = trade['Date'] - timedelta(days=25)
+        end_date = trade['Date'] + timedelta(days=10)
+        h = yf.download(yf_ticker, start=start_date, end=end_date)
         
-        # Fixed markers to show exact entry point
-        markers = [{"time": trade['Date'].strftime('%Y-%m-%d'), "position": "belowBar", "color": "#2196F3", "shape": "arrowUp", "text": "ENTRY"}]
-        
-        renderLightweightCharts([{"type": 'Candlestick', "data": chart_data, "markers": markers}], 'chart', height=500)
-        st.info(f"Analyzing {ticker}: Trade on {trade['Date'].date()} resulted in ${trade['P&L']:.2f}")
-    except:
-        st.warning("Chart data unavailable for this ticker or date range.")
+        if not h.empty:
+            if isinstance(h.columns, pd.MultiIndex): h.columns = h.columns.get_level_values(0)
+            h = h.reset_index()
+            h.columns = [str(c).lower() for c in h.columns]
+            
+            # Find closest date to trade for the marker (fixes weekend gaps)
+            h['diff'] = (pd.to_datetime(h['time']) - trade['Date']).abs()
+            marker_time = h.sort_values('diff').iloc[0]['time']
+            
+            chart_data = h.rename(columns={'date': 'time'}).to_dict('records')
+            markers = [{"time": str(marker_time)[:10], "position": "belowBar", "color": "#2196F3", "shape": "arrowUp", "text": "ENTRY"}]
+            
+            renderLightweightCharts([{"type": 'Candlestick', "data": chart_data, "markers": markers}], 'chart', height=500)
+            st.info(f"Entry on {trade['Date'].date()} | P&L: ${trade['P&L']:.2f} | Setup: {trade['Setup']}")
+        else:
+            st.warning("No price data found for this ticker/date range.")
+    except Exception as e:
+        st.error(f"Chart Load Error: {e}")
 
 elif menu == "Deep Statistics":
-    st.title("Strategy & Error Analytics")
-    col_l, col_r = st.columns(2)
-    
-    with col_l:
-        st.subheader("P&L by Strategy")
-        st.plotly_chart(px.bar(df.groupby("Setup")["P&L"].sum().reset_index(), x="Setup", y="P&L", color="P&L", template="plotly_dark"), use_container_width=True)
-        
-    with col_r:
-        st.subheader("Financial Impact of Mistakes")
+    st.title("Advanced Strategy Analytics")
+    cl, cr = st.columns(2)
+    with cl:
+        st.subheader("P&L by Strategy Setup")
+        fig_setup = px.bar(df.groupby("Setup")["P&L"].sum().reset_index(), x="Setup", y="P&L", color="P&L", template="plotly_dark")
+        st.plotly_chart(fig_setup, use_container_width=True)
+    with cr:
+        st.subheader("Cost of Mistakes")
         mistakes = df[df["Mistake"] != "None"]
         if not mistakes.empty:
-            st.plotly_chart(px.pie(mistakes, values=abs(mistakes['P&L']), names='Mistake', hole=0.4, template="plotly_dark"), use_container_width=True)
+            fig_mistake = px.pie(mistakes, values=abs(mistakes['P&L']), names='Mistake', hole=0.4, template="plotly_dark")
+            st.plotly_chart(fig_mistake, use_container_width=True)
         else:
-            st.success("No discipline errors logged!")
+            st.success("No discipline errors logged yet!")
