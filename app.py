@@ -19,7 +19,7 @@ st.markdown("""
 
 # --- 2. DATA ENGINE ---
 @st.cache_data
-def get_enhanced_data():
+def get_mock_data():
     data = {
         "Date": pd.to_datetime(["2024-01-02", "2024-01-03", "2024-01-05", "2024-01-08", "2024-01-10", "2024-01-12"]),
         "Ticker": ["AAPL", "TSLA", "NVDA", "AMD", "MSFT", "META"],
@@ -35,10 +35,16 @@ def get_enhanced_data():
     df["Status"] = np.where(df["P&L"] > 0, "Win", "Loss")
     return df
 
-df = get_enhanced_data()
-
-# --- 3. SIDEBAR NAVIGATION ---
+# --- 3. SIDEBAR & UPLOAD ---
 st.sidebar.title("💎 AlphaZella Pro")
+uploaded_file = st.sidebar.file_uploader("Upload Trade CSV", type="csv")
+
+if uploaded_file:
+    df = pd.read_csv(uploaded_file)
+    df['Date'] = pd.to_datetime(df['Date'])
+else:
+    df = get_mock_data()
+
 menu = st.sidebar.radio("Navigation", ["Dashboard", "Calendar", "Trade Analysis", "Deep Statistics"])
 
 # --- 4. PAGE: DASHBOARD ---
@@ -47,7 +53,7 @@ if menu == "Dashboard":
     
     col1, col2, col3, col4 = st.columns(4)
     total_pl = df["P&L"].sum()
-    win_rate = (len(df[df["Status"]=="Win"]) / len(df)) * 100
+    win_rate = (len(df[df["Status"]=="Win"]) / len(df)) * 100 if len(df) > 0 else 0
     
     col1.metric("Net P&L", f"${total_pl:,.2f}", delta=f"{total_pl:.2f}")
     col2.metric("Win Rate", f"{win_rate:.1f}%")
@@ -73,6 +79,7 @@ elif menu == "Calendar":
             "title": f"${row['P&L']:.0f}",
             "start": row["Date"].strftime("%Y-%m-%d"),
             "backgroundColor": color,
+            "borderColor": color
         })
 
     cal_options = {"initialView": "dayGridMonth", "selectable": True}
@@ -82,19 +89,53 @@ elif menu == "Calendar":
 elif menu == "Trade Analysis":
     st.title("Trade Replay")
     selected_ticker = st.selectbox("Select Trade", df["Ticker"].unique())
-    trade = df[df["Ticker"] == selected_ticker].iloc[0]
+    trade = df[df["Ticker"] == selected_ticker].iloc[-1] # Get most recent for that ticker
     
     @st.cache_data
     def fetch_chart(symbol, date):
-        h = yf.download(symbol, start=date-timedelta(days=10), end=date+timedelta(days=5), interval="1d")
+        # Fetch a window around the trade date
+        h = yf.download(symbol, start=date-timedelta(days=15), end=date+timedelta(days=5), interval="1d")
         h = h.reset_index()
         h.columns = [c.lower() for c in h.columns]
         h = h.rename(columns={'date': 'time'})
         h['time'] = h['time'].dt.strftime('%Y-%m-%d')
         return h.to_dict('records')
 
-    chart_data = fetch_chart(selected_ticker, trade["Date"])
+    try:
+        chart_data = fetch_chart(selected_ticker, trade["Date"])
+        
+        markers = [{
+            "time": trade["Date"].strftime("%Y-%m-%d"),
+            "position": "belowBar" if trade["Type"]=="Long" else "aboveBar",
+            "color": "#2196F3" if trade["Type"]=="Long" else "#e91e63",
+            "shape": "arrowUp" if trade["Type"]=="Long" else "arrowDown",
+            "text": f"ENTRY: {trade['Entry']}"
+        }]
+
+        renderLightweightCharts([{"type": 'Candlestick', "data": chart_data, "markers": markers}], 'chart')
+        st.info(f"Setup: {trade['Setup']} | Mistake: {trade['Mistake']}")
+    except Exception as e:
+        st.error(f"Chart error: {e}")
+
+# --- 7. PAGE: DEEP STATISTICS ---
+elif menu == "Statistics":
+    st.title("Deep Statistics")
     
-    markers = [{
-        "time": trade["Date"].strftime("%Y-%m-%d"),
-        "position": "belowBar" if trade["Type"]=="Long" else "aboveBar
+    c1, c2, c3 = st.columns(3)
+    avg_pl = df["P&L"].mean()
+    std_pl = df["P&L"].std()
+    sharpe = (avg_pl / std_pl) if std_pl > 0 else 0
+    
+    wins = df[df["P&L"] > 0]["P&L"].sum()
+    losses = abs(df[df["P&L"] < 0]["P&L"].sum())
+    pf = wins/losses if losses != 0 else wins
+
+    c1.metric("Sharpe Ratio", f"{sharpe:.2f}")
+    c2.metric("Profit Factor", f"{pf:.2f}")
+    c3.metric("Avg Trade", f"${avg_pl:.2f}")
+
+    st.divider()
+    col_a, col_b = st.columns(2)
+    
+    with col_a:
+        st.subheader("P
