@@ -18,13 +18,13 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. ROBUST DATA ENGINE ---
+# --- 2. DATA ENGINE ---
 @st.cache_data
 def process_data(uploaded_file):
     if uploaded_file:
         df = pd.read_csv(uploaded_file)
     else:
-        # Initial Demo Data
+        # Default Demo Data
         data = {
             "Date": ["2025-11-03", "2025-11-07", "2025-11-12", "2025-12-10", "2026-01-05"],
             "Ticker": ["AAPL", "TSLA", "NVDA", "META", "BTC"],
@@ -37,11 +37,9 @@ def process_data(uploaded_file):
         }
         df = pd.DataFrame(data)
 
-    # Standardize column headers
     df.columns = df.columns.str.strip()
     df['Date'] = pd.to_datetime(df['Date'])
     
-    # Auto-calculate P&L if missing
     if "P&L" not in df.columns:
         mult = np.where(df["Type"].str.strip().str.capitalize() == "Long", 1, -1)
         df["P&L"] = (df["Exit"] - df["Entry"]) * df["Quantity"] * mult
@@ -73,7 +71,7 @@ st.sidebar.download_button(
 
 menu = st.sidebar.radio("Navigation", ["Dashboard", "Calendar", "Trade Log", "Trade Analysis", "Deep Statistics"])
 
-# --- 4. NAVIGATION LOGIC ---
+# --- 4. PAGE LOGIC ---
 
 if menu == "Dashboard":
     st.title("Performance Dashboard")
@@ -114,68 +112,52 @@ elif menu == "Trade Analysis":
     ticker = st.selectbox("Select Ticker", df["Ticker"].unique())
     trade = df[df["Ticker"] == ticker].iloc[-1]
     
-    # Ticker format fix for Crypto
     yf_ticker = f"{ticker}-USD" if ticker in ["BTC", "ETH", "SOL"] else ticker
     
-try:
-    start_date = trade['Date'] - timedelta(days=25)
-    end_date = trade['Date'] + timedelta(days=10)
-    h = yf.download(yf_ticker, start=start_date, end=end_date)
+    try:
+        start_date = trade['Date'] - timedelta(days=25)
+        end_date = trade['Date'] + timedelta(days=10)
+        h = yf.download(yf_ticker, start=start_date, end=end_date)
         
-if not h.empty:
-    # 1. Handle Multi-Index columns from new yfinance versions
-     if isinstance(h.columns, pd.MultiIndex):
-        h.columns = h.columns.get_level_values(0)
+        if not h.empty:
+            if isinstance(h.columns, pd.MultiIndex): h.columns = h.columns.get_level_values(0)
+            h = h.reset_index()
+            h.columns = [str(c).strip().lower() for c in h.columns]
             
-    # 2. Reset index to turn 'Date' (index) into a column
-        h = h.reset_index()
+            # Identify the date column
+            date_col = next((c for c in ['date', 'datetime', 'time'] if c in h.columns), None)
             
-    # 3. Clean column names (strip spaces and lowercase)
-        h.columns = [str(c).strip().lower() for c in h.columns]
-            
-     # 4. CRITICAL FIX: Find the date column regardless of name
-    # yfinance usually returns 'date', but sometimes 'datetime'
-        date_col = None
-        for col in ['date', 'datetime', 'time']:
-             if col in h.columns:
-                date_col = col
-                 break
-            
-        if date_col:
-             h = h.rename(columns={date_col: 'time'})
-            # Lightweight charts needs 'time' in YYYY-MM-DD string format
-            h['time'] = pd.to_datetime(h['time']).dt.strftime('%Y-%m-%d')
+            if date_col:
+                h = h.rename(columns={date_col: 'time'})
+                h['time'] = pd.to_datetime(h['time']).dt.strftime('%Y-%m-%d')
                 
-            # Find closest date to trade for the marker
-             h_temp = h.copy()
-            h_temp['diff'] = (pd.to_datetime(h_temp['time']) - trade['Date']).abs()
-             marker_time = h_temp.sort_values('diff').iloc[0]['time']
+                # Align marker with closest data point
+                h_temp = h.copy()
+                h_temp['diff'] = (pd.to_datetime(h_temp['time']) - trade['Date']).abs()
+                marker_time = h_temp.sort_values('diff').iloc[0]['time']
                 
-             chart_data = h[['time', 'open', 'high', 'low', 'close']].to_dict('records')
-            markers = [{"time": marker_time, "position": "belowBar", "color": "#2196F3", "shape": "arrowUp", "text": "ENTRY"}]
+                chart_data = h[['time', 'open', 'high', 'low', 'close']].to_dict('records')
+                markers = [{"time": marker_time, "position": "belowBar", "color": "#2196F3", "shape": "arrowUp", "text": "ENTRY"}]
                 
-            renderLightweightCharts([{"type": 'Candlestick', "data": chart_data, "markers": markers}], 'chart', height=500)
-            st.info(f"Entry on {trade['Date'].date()} | P&L: ${trade['P&L']:.2f} | Setup: {trade['Setup']}")
+                renderLightweightCharts([{"type": 'Candlestick', "data": chart_data, "markers": markers}], 'chart', height=500)
+                st.info(f"Entry: {trade['Date'].date()} | P&L: ${trade['P&L']:.2f}")
+            else:
+                st.error("Date column missing from price data.")
         else:
-            st.error("Could not find a valid Date column in market data.")
-        else:
-            st.warning("No price data found for this ticker/date range.")
-            
- except Exception as e:
+            st.warning("No price data found.")
+    except Exception as e:
         st.error(f"Chart Load Error: {e}")
 
 elif menu == "Deep Statistics":
-    st.title("Advanced Strategy Analytics")
+    st.title("Advanced Analytics")
     cl, cr = st.columns(2)
     with cl:
-        st.subheader("P&L by Strategy Setup")
-        fig_setup = px.bar(df.groupby("Setup")["P&L"].sum().reset_index(), x="Setup", y="P&L", color="P&L", template="plotly_dark")
-        st.plotly_chart(fig_setup, use_container_width=True)
+        st.subheader("P&L by Strategy")
+        st.plotly_chart(px.bar(df.groupby("Setup")["P&L"].sum().reset_index(), x="Setup", y="P&L", color="P&L", template="plotly_dark"), use_container_width=True)
     with cr:
-        st.subheader("Cost of Mistakes")
+        st.subheader("Mistake Costs")
         mistakes = df[df["Mistake"] != "None"]
         if not mistakes.empty:
-            fig_mistake = px.pie(mistakes, values=abs(mistakes['P&L']), names='Mistake', hole=0.4, template="plotly_dark")
-            st.plotly_chart(fig_mistake, use_container_width=True)
+            st.plotly_chart(px.pie(mistakes, values=abs(mistakes['P&L']), names='Mistake', hole=0.4, template="plotly_dark"), use_container_width=True)
         else:
-            st.success("No discipline errors logged yet!")
+            st.success("No discipline errors logged!")
