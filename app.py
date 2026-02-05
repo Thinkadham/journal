@@ -161,7 +161,7 @@ if not h.empty:
         else:
             st.warning("No price data found for this ticker/date range.")
             
-    except Exception as e:
+ except Exception as e:
         st.error(f"Chart Load Error: {e}")
 
 elif menu == "Deep Statistics":
