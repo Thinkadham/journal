@@ -106,67 +106,76 @@ elif menu == "Trade Analysis":
     with col2:
         interval = st.selectbox("Timeframe", ["1d", "1h", "15m"], index=0)
     
-    # Filter trades for this ticker and pick the latest one
     trade = df[df["Ticker"] == ticker].iloc[-1]
     yf_ticker = f"{ticker}-USD" if ticker in ["BTC", "ETH", "SOL"] else ticker
     
     try:
-        # --- FIX: Safe Date Logic for Intraday ---
-        # Yahoo Finance limit: 1h data (730 days), 15m data (60 days)
-        # We ensure the fetch window is within those limits
+        # Safe Date Logic for Intraday
         end_fetch = trade['Date'] + timedelta(days=5)
-        
         if interval == "1d":
             start_fetch = trade['Date'] - timedelta(days=60)
         elif interval == "1h":
-            # Ensure we don't look back further than 2 years
             start_fetch = max(trade['Date'] - timedelta(days=30), datetime.now() - timedelta(days=720))
         else: # 15m
-            # Ensure we don't look back further than 55 days
             start_fetch = max(trade['Date'] - timedelta(days=7), datetime.now() - timedelta(days=55))
 
-        with st.spinner(f"Loading {interval} data..."):
-            h = yf.download(yf_ticker, start=start_fetch, end=end_fetch, interval=interval)
+        h = yf.download(yf_ticker, start=start_fetch, end=end_fetch, interval=interval)
         
         if not h.empty:
             if isinstance(h.columns, pd.MultiIndex): h.columns = h.columns.get_level_values(0)
             h = h.reset_index()
-            
-            # Find the actual date column (Datetime for intraday, Date for daily)
             date_col = 'Datetime' if 'Datetime' in h.columns else 'Date'
             
             fig = go.Figure(data=[go.Candlestick(
                 x=h[date_col], open=h['Open'], high=h['High'], low=h['Low'], close=h['Close'],
                 name=ticker
             )])
-            
-            # --- FIX: Anchored Markers ---
-            # Buying marker
+
+            # --- 1. RISK/REWARD VISUAL LINE ---
+            # Draws a vertical line between Entry and Exit
+            fig.add_shape(
+                type="line",
+                x0=trade['Date'], y0=trade['Entry'],
+                x1=trade['Date'], y1=trade['Exit'],
+                line=dict(color="white", width=2, dash="dot"),
+            )
+
+            # --- 2. ANCHORED MARKERS ---
+            # BUY Marker
             fig.add_annotation(
                 x=trade['Date'], y=trade['Entry'],
                 text=f"BUY @ {trade['Entry']}", showarrow=True,
                 arrowhead=2, arrowcolor="#00ffcc", bgcolor="#00ffcc", font=dict(color="black"),
-                ax=0, ay=-30  # Offset is now relative to the price point
+                ax=40, ay=0 # Horizontal offset to keep it clear of the candle
             )
             
-            # Selling marker
+            # SELL Marker
             fig.add_annotation(
                 x=trade['Date'], y=trade['Exit'],
                 text=f"SELL @ {trade['Exit']}", showarrow=True,
                 arrowhead=2, arrowcolor="#ff4b4b", bgcolor="#ff4b4b", font=dict(color="white"),
-                ax=0, ay=30
+                ax=40, ay=0
             )
             
+            # --- 3. P&L LABEL ---
+            fig.add_annotation(
+                x=trade['Date'], y=(trade['Entry'] + trade['Exit']) / 2,
+                text=f"P&L: ${trade['P&L']:,.2f}",
+                showarrow=False, bgcolor="rgba(0,0,0,0.5)", font=dict(color="white", size=12),
+                xshift=80
+            )
+
             fig.update_layout(template="plotly_dark", xaxis_rangeslider_visible=False, height=600)
             st.plotly_chart(fig, use_container_width=True)
             
-            st.info(f"**Trade Summary:** Entered {trade['Type']} at {trade['Entry']} | Exit at {trade['Exit']}")
+            st.info(f"**Performance:** This trade resulted in a ${trade['P&L']:,.2f} {trade['Status'].lower()}.")
         else:
-            st.error(f"No {interval} data available for this date. Try switching to '1d'.")
+            st.error(f"No {interval} data available. Try '1d' timeframe.")
             
     except Exception as e:
-        st.error(f"Date/Format Error: {e}. This usually happens if the trade is too old for the selected timeframe.")
-
+        st.error(f"Error loading chart: {e}")
+            
+   
 elif menu == "Deep Statistics":
     st.title("Advanced Strategy Analytics")
     cl, cr = st.columns(2)
