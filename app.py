@@ -99,17 +99,22 @@ elif menu == "Trade Log":
 
 elif menu == "Trade Analysis":
     st.title("Technical Trade Review")
-    ticker = st.selectbox("Select Ticker", df["Ticker"].unique())
-    # Select the most recent trade for that ticker
-    trade = df[df["Ticker"] == ticker].iloc[-1]
     
-    # Adjust for crypto
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        ticker = st.selectbox("Select Ticker", df["Ticker"].unique())
+    with col2:
+        interval = st.selectbox("Timeframe", ["1d", "1h", "15m"], index=0)
+    
+    trade = df[df["Ticker"] == ticker].iloc[-1]
     yf_ticker = f"{ticker}-USD" if ticker in ["BTC", "ETH", "SOL"] else ticker
     
     try:
-        with st.spinner("Fetching market data..."):
-            h = yf.download(yf_ticker, start=trade['Date']-timedelta(days=25), end=trade['Date']+timedelta(days=10))
-            
+        # Fetching data - for Intraday (1h/15m), we limit the range to 7 days
+        days_back = 30 if interval == "1d" else 7
+        h = yf.download(yf_ticker, start=trade['Date']-timedelta(days=days_back), 
+                        end=trade['Date']+timedelta(days=5), interval=interval)
+        
         if not h.empty:
             if isinstance(h.columns, pd.MultiIndex): h.columns = h.columns.get_level_values(0)
             h = h.reset_index()
@@ -119,20 +124,28 @@ elif menu == "Trade Analysis":
                 name=ticker
             )])
             
-            # Entry Marker
+            # --- FIX: ENTRY MARKER (Mapped to Entry Price) ---
             fig.add_annotation(
                 x=trade['Date'], y=trade['Entry'],
-                text="ENTRY", showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=2,
-                arrowcolor="#2196F3", bgcolor="#2196F3", font=dict(color="white")
+                text=f"BUY @ {trade['Entry']}", showarrow=True, arrowhead=2,
+                arrowcolor="#00ffcc", bgcolor="#00ffcc", font=dict(color="black"),
+                ay=-40  # Positions the label 40 pixels ABOVE the entry price
             )
             
-            fig.update_layout(template="plotly_dark", xaxis_rangeslider_visible=False, height=600, margin=dict(l=0,r=0,b=0,t=40))
+            # --- ADDED: EXIT MARKER (Mapped to Exit Price) ---
+            fig.add_annotation(
+                x=trade['Date'], y=trade['Exit'],
+                text=f"SELL @ {trade['Exit']}", showarrow=True, arrowhead=2,
+                arrowcolor="#ff4b4b", bgcolor="#ff4b4b", font=dict(color="white"),
+                ay=40   # Positions the label 40 pixels BELOW the exit price
+            )
+            
+            fig.update_layout(template="plotly_dark", xaxis_rangeslider_visible=False, height=600)
             st.plotly_chart(fig, use_container_width=True)
             
-            # Info Box
-            st.info(f"**Trade Details:** {trade['Type']} on {trade['Ticker']} | Entry: ${trade['Entry']} | Exit: ${trade['Exit']} | P&L: ${trade['P&L']:,.2f}")
+            st.info(f"**{ticker} Analysis** | Strategy: {trade['Setup']} | Profit: ${trade['P&L']:,.2f}")
         else:
-            st.warning("Yahoo Finance returned no data for this ticker/period.")
+            st.warning("No market data found for this period.")
     except Exception as e:
         st.error(f"Analysis Error: {e}")
 
