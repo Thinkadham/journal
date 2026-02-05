@@ -40,8 +40,18 @@ st.sidebar.title("💎 AlphaZella Pro")
 uploaded_file = st.sidebar.file_uploader("Upload Trade CSV", type="csv")
 
 if uploaded_file:
+    # Load the data
     df = pd.read_csv(uploaded_file)
-    df['Date'] = pd.to_datetime(df['Date'])
+    
+    # CLEANING: Remove any leading/trailing spaces from column names
+    df.columns = df.columns.str.strip()
+    
+    # Check if 'Date' exists after cleaning
+    if 'Date' in df.columns:
+        df['Date'] = pd.to_datetime(df['Date'])
+    else:
+        st.error(f"Column 'Date' not found. Available columns: {list(df.columns)}")
+        st.stop()
 else:
     df = get_mock_data()
 
