@@ -97,8 +97,16 @@ elif menu == "Trade Analysis":
     def fetch_chart(symbol, date):
         # Fetching data window
         h = yf.download(symbol, start=date-timedelta(days=15), end=date+timedelta(days=5), interval="1d")
+        
+        # FIX: Flatten MultiIndex columns if they exist
+        if isinstance(h.columns, pd.MultiIndex):
+            h.columns = h.columns.get_level_values(0)
+            
         h = h.reset_index()
-        h.columns = [c.lower() for c in h.columns]
+        
+        # Ensure column names are strings before calling .lower()
+        h.columns = [str(c).lower() for c in h.columns]
+        
         h = h.rename(columns={'date': 'time'})
         h['time'] = h['time'].dt.strftime('%Y-%m-%d')
         return h.to_dict('records')
