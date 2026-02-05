@@ -11,8 +11,7 @@ import io
 # --- 1. APP CONFIG ---
 st.set_page_config(page_title="AlphaZella Pro", layout="wide")
 
-# --- 2. DATA PERSISTENCE & INITIALIZATION ---
-# Using session_state ensures your manual entries don't vanish as you navigate
+# --- 2. DATA PERSISTENCE ---
 if "manual_df" not in st.session_state:
     st.session_state.manual_df = pd.DataFrame(columns=[
         "Date", "Ticker", "Type", "Entry", "Exit", "Quantity", "Setup", "Mistake", "P&L", "Status"
@@ -52,10 +51,8 @@ with st.sidebar.expander("🧮 Position Size Calculator"):
 file = st.sidebar.file_uploader("Upload CSV", type="csv")
 uploaded_df = process_uploaded_file(file)
 
-# Combine Manual + Uploaded into one Master DF
+# Master Dataframe
 all_trades = pd.concat([st.session_state.manual_df, uploaded_df], ignore_index=True)
-
-# Ensure Date is datetime objects for all logic
 if not all_trades.empty:
     all_trades['Date'] = pd.to_datetime(all_trades['Date'])
 
@@ -69,82 +66,86 @@ if menu == "Manual Entry":
         col1, col2, col3 = st.columns(3)
         with col1:
             m_date = st.date_input("Date", datetime.now())
-            # Auto-populating Tickers based on existing data + manual input
-            existing_tickers = all_trades["Ticker"].unique().tolist() if not all_trades.empty else []
-            m_ticker = st.text_input("Ticker (e.g. BTC, AAPL)", help="Type new or existing ticker").upper()
+            m_ticker = st.text_input("Ticker (e.g. BTC, AAPL)").upper()
         with col2:
             m_type = st.selectbox("Type", ["Long", "Short"])
             m_entry = st.number_input("Entry Price", min_value=0.0, step=0.01, format="%.2f")
         with col3:
             m_exit = st.number_input("Exit Price", min_value=0.0, step=0.01, format="%.2f")
-            # FIX: Changed to float step to allow 0.1 BTC
             m_qty = st.number_input("Quantity", min_value=0.0001, step=0.0001, format="%.4f")
         
         m_setup = st.text_input("Setup Name")
         m_mistake = st.selectbox("Mistake", ["None", "FOMO", "Early Exit", "Revenge", "Late Entry"])
         
-        if st.form_submit_button("Add Trade to Journal"):
+        if st.form_submit_button("Add Trade"):
             mult = 1 if m_type == "Long" else -1
             pl = (m_exit - m_entry) * m_qty * mult
-            new_trade = pd.DataFrame([{
+            new_row = pd.DataFrame([{
                 "Date": pd.to_datetime(m_date), "Ticker": m_ticker, "Type": m_type,
                 "Entry": m_entry, "Exit": m_exit, "Quantity": m_qty, 
                 "Setup": m_setup, "Mistake": m_mistake, "P&L": pl, 
                 "Status": "Win" if pl > 0 else "Loss"
             }])
-            st.session_state.manual_df = pd.concat([st.session_state.manual_df, new_trade], ignore_index=True)
-            st.success(f"Added {m_ticker} trade!")
+            st.session_state.manual_df = pd.concat([st.session_state.manual_df, new_row], ignore_index=True)
             st.rerun()
 
-elif menu == "Dashboard":
-    st.title("Performance Dashboard")
-    if all_trades.empty:
-        st.info("No trades found. Add one in 'Manual Entry' or upload a CSV.")
-    else:
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Net P&L", f"${all_trades['P&L'].sum():,.2f}")
-        win_rate = (len(all_trades[all_trades['P&L']>0])/len(all_trades)*100)
-        c2.metric("Win Rate", f"{win_rate:.1f}%")
-        c3.metric("Total Trades", len(all_trades))
-        c4.metric("Avg Trade", f"${all_trades['P&L'].mean():.2f}")
-        
-        df_sorted = all_trades.sort_values("Date")
-        df_sorted["Cum_PL"] = df_sorted["P&L"].cumsum()
-        st.plotly_chart(px.area(df_sorted, x="Date", y="Cum_PL", title="Equity Curve", template="plotly_dark"), use_container_width=True)
-
-elif menu == "Calendar":
-    st.title("Daily P&L Calendar")
-    if all_trades.empty:
-        st.warning("Journal is empty.")
-    else:
-        daily_pl = all_trades.groupby(all_trades['Date'].dt.date)['P&L'].sum().reset_index()
-        events = [{"title": f"${r['P&L']:.0f}", "start": str(r['Date']), 
-                   "backgroundColor": "#2ecc71" if r['P&L'] >= 0 else "#e74c3c", "allDay": True} 
-                  for _, r in daily_pl.iterrows()]
-        calendar(events=events, options={"initialView": "dayGridMonth"})
-
 elif menu == "Trade Log":
-    st.title("Full Trade History")
-    st.dataframe(all_trades.sort_values("Date", ascending=False), use_container_width=True, hide_index=True)
+    st.title("📜 Trade Log")
+    if st.session_state.manual_df.empty and (uploaded_df is None or uploaded_df.empty):
+        st.info("No trades to show.")
+    else:
+        # Displaying manual trades with a delete button
+        st.subheader("Manual Entries")
+        for i, row in st.session_state.manual_df.iterrows():
+            cols = st.columns([1, 1, 1, 1, 1, 1])
+            cols[0].write(row['Date'].date())
+            cols[1].write(row['Ticker'])
+            cols[2].write(f"${row['P&L']:.2f}")
+            if cols[5].button("🗑️ Delete", key=f"del_{i}"):
+                st.session_state.manual_df = st.session_state.manual_df.drop(i).reset_index(drop=True)
+                st.rerun()
+        
+        st.subheader("All Data Preview")
+        st.dataframe(all_trades, use_container_width=True)
 
 elif menu == "Trade Analysis":
+    st.title("📊 Technical Review")
     if all_trades.empty:
-        st.info("Log some trades first!")
+        st.warning("Add trades first.")
     else:
-        ticker = st.selectbox("Select Ticker to Analyze", all_trades["Ticker"].unique())
-        # Visualizing the latest trade for that ticker
+        ticker = st.selectbox("Ticker", all_trades["Ticker"].unique())
+        interval = st.selectbox("Timeframe", ["1d", "1h", "15m"])
         trade = all_trades[all_trades["Ticker"] == ticker].iloc[-1]
         
-        # Plotly Candlestick Logic... (Keeping your stable Plotly logic)
         yf_ticker = f"{ticker}-USD" if ticker in ["BTC", "ETH", "SOL"] else ticker
-        try:
-            h = yf.download(yf_ticker, start=trade['Date']-timedelta(days=15), end=trade['Date']+timedelta(days=7))
-            if not h.empty:
-                if isinstance(h.columns, pd.MultiIndex): h.columns = h.columns.get_level_values(0)
-                h = h.reset_index()
-                fig = go.Figure(data=[go.Candlestick(x=h['Date'], open=h['Open'], high=h['High'], low=h['Low'], close=h['Close'])])
-                fig.add_annotation(x=trade['Date'], y=trade['Entry'], text="ENTRY", showarrow=True, arrowhead=1, bgcolor="#2196F3")
-                fig.update_layout(template="plotly_dark", xaxis_rangeslider_visible=False)
-                st.plotly_chart(fig, use_container_width=True)
-        except Exception as e:
-            st.error(f"Chart error: {e}")
+        h = yf.download(yf_ticker, start=trade['Date']-timedelta(days=20), end=trade['Date']+timedelta(days=5), interval=interval)
+        
+        if not h.empty:
+            h = h.reset_index()
+            d_col = 'Datetime' if 'Datetime' in h.columns else 'Date'
+            fig = go.Figure(data=[go.Candlestick(x=h[d_col], open=h['Open'], high=h['High'], low=h['Low'], close=h['Close'])])
+            
+            # --- RISK/REWARD LINE ---
+            fig.add_shape(type="line", x0=trade['Date'], y0=trade['Entry'], x1=trade['Date'], y1=trade['Exit'],
+                          line=dict(color="white", width=2, dash="dot"))
+            
+            fig.add_annotation(x=trade['Date'], y=trade['Entry'], text="BUY", showarrow=True, arrowhead=1, bgcolor="#00ffcc")
+            fig.add_annotation(x=trade['Date'], y=trade['Exit'], text="SELL", showarrow=True, arrowhead=1, bgcolor="#ff4b4b")
+            
+            fig.update_layout(template="plotly_dark", xaxis_rangeslider_visible=False)
+            st.plotly_chart(fig, use_container_width=True)
+
+elif menu == "Deep Statistics":
+    st.title("📈 Strategy Analytics")
+    if all_trades.empty:
+        st.info("No data available.")
+    else:
+        c1, c2 = st.columns(2)
+        with c1:
+            st.subheader("P&L by Setup")
+            fig_setup = px.bar(all_trades.groupby("Setup")["P&L"].sum().reset_index(), x="Setup", y="P&L", color="P&L", template="plotly_dark")
+            st.plotly_chart(fig_setup, use_container_width=True)
+        with c2:
+            st.subheader("P&L by Ticker")
+            fig_ticker = px.pie(all_trades, values=all_trades['P&L'].clip(lower=0), names='Ticker', template="plotly_dark")
+            st.plotly_chart(fig_ticker, use_container_width=True)
