@@ -110,66 +110,71 @@ elif menu == "Trade Log":
 elif menu == "Trade Analysis":
     st.title("Technical Trade Review")
     
-    # 1. Ticker Selection
-    ticker_list = df["Ticker"].unique()
-    ticker = st.selectbox("Select Ticker", ticker_list)
+    ticker = st.selectbox("Select Ticker", df["Ticker"].unique())
+    trade = df[df["Ticker"] == ticker].iloc[-1]
     
-    # 2. Get the specific trade
-    ticker_trades = df[df["Ticker"] == ticker]
-    trade = ticker_trades.iloc[-1]
-    
-    # 3. Format Ticker for Yahoo Finance
-    yf_ticker = f"{ticker}-USD" if ticker in ["BTC", "ETH", "SOL", "USDT"] else ticker
+    yf_ticker = f"{ticker}-USD" if ticker in ["BTC", "ETH", "SOL"] else ticker
     
     try:
-        # Fetch data with a safe buffer
         start_date = (trade['Date'] - timedelta(days=30)).strftime('%Y-%m-%d')
         end_date = (trade['Date'] + timedelta(days=15)).strftime('%Y-%m-%d')
         
         h = yf.download(yf_ticker, start=start_date, end=end_date, interval="1d", progress=False)
         
         if not h.empty:
-            # Flatten columns if MultiIndex (common in new yf versions)
             if isinstance(h.columns, pd.MultiIndex):
                 h.columns = h.columns.get_level_values(0)
             
             h = h.reset_index()
             h.columns = [str(c).strip().lower() for c in h.columns]
             
-            # Identify Date Column
             date_col = next((c for c in ['date', 'datetime', 'time'] if c in h.columns), None)
             
             if date_col:
-                # Prepare data strictly for Lightweight Charts
+                # 1. Prepare and Clean Data
                 chart_df = h.rename(columns={date_col: 'time'})
                 chart_df['time'] = pd.to_datetime(chart_df['time']).dt.strftime('%Y-%m-%d')
                 
-                # Filter out any rows with missing price data
+                # 2. FORCE FLOAT CONVERSION (Crucial for JavaScript stability)
+                for col in ['open', 'high', 'low', 'close']:
+                    chart_df[col] = chart_df[col].astype(float)
+                
                 chart_df = chart_df.dropna(subset=['open', 'high', 'low', 'close'])
                 
-                # Convert to the list of dicts format the library expects
+                # 3. Create a clean list of dicts
                 chart_data = chart_df[['time', 'open', 'high', 'low', 'close']].to_dict('records')
                 
-                # Check if we actually have data to show
                 if len(chart_data) > 0:
-                    # Simple call without markers first to verify it works
+                    # 4. Use Plotly as a fallback if the component continues to fail
+                    # If you still see "Component Error", uncomment the lines below to use Plotly instead.
+                    
+                    # fig = px.line(chart_df, x='time', y='close', title=f"{ticker} Fallback Chart")
+                    # st.plotly_chart(fig, use_container_width=True)
+                    
                     renderLightweightCharts([
                         {
                             "type": 'Candlestick', 
-                            "data": chart_data
+                            "data": chart_data,
+                            "options": {
+                                "upColor": '#26a69a',
+                                "downColor": '#ef5350',
+                                "borderVisible": False,
+                                "wickUpColor": '#26a69a',
+                                "wickDownColor": '#ef5350',
+                            }
                         }
-                    ], key=f"chart_stable_{ticker}")
+                    ], key=f"chart_final_{ticker}")
                     
                     st.success(f"Showing {ticker} chart. Trade Date: {trade['Date'].date()}")
                 else:
-                    st.error("Chart data is empty after processing.")
+                    st.error("No valid price data after cleaning.")
             else:
-                st.error("Could not find Date column in price data.")
+                st.error("Date column not found in market data.")
         else:
-            st.warning(f"No price data returned for {yf_ticker}. The symbol might be delisted or incorrect.")
+            st.warning(f"No market data found for {yf_ticker}.")
             
     except Exception as e:
-        st.error(f"Chart Load Error: {e}")
+        st.error(f"Technical Error: {e}")
 
 elif menu == "Deep Statistics":
     st.title("Advanced Analytics")
