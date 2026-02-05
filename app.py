@@ -139,7 +139,7 @@ elif menu == "Trade Analysis":
                 chart_data = h[['time', 'open', 'high', 'low', 'close']].to_dict('records')
                 markers = [{"time": marker_time, "position": "belowBar", "color": "#2196F3", "shape": "arrowUp", "text": "ENTRY"}]
                 
-                renderLightweightCharts([{"type": 'Candlestick', "data": chart_data, "markers": markers}], 'chart', height=500)
+                renderLightweightCharts([{"type": 'Candlestick', "data": chart_data, "markers": markers}], 'chart')
                 st.info(f"Entry: {trade['Date'].date()} | P&L: ${trade['P&L']:.2f}")
             else:
                 st.error("Date column missing from price data.")
