@@ -115,38 +115,58 @@ elif menu == "Trade Analysis":
     yf_ticker = f"{ticker}-USD" if ticker in ["BTC", "ETH", "SOL"] else ticker
     
     try:
-        start_date = trade['Date'] - timedelta(days=25)
+        # Fetching a slightly wider window
+        start_date = trade['Date'] - timedelta(days=30)
         end_date = trade['Date'] + timedelta(days=10)
         h = yf.download(yf_ticker, start=start_date, end=end_date)
         
         if not h.empty:
-            if isinstance(h.columns, pd.MultiIndex): h.columns = h.columns.get_level_values(0)
+            if isinstance(h.columns, pd.MultiIndex): 
+                h.columns = h.columns.get_level_values(0)
+            
             h = h.reset_index()
+            # Clean column names
             h.columns = [str(c).strip().lower() for c in h.columns]
             
-            # Identify the date column
+            # Find the date column
             date_col = next((c for c in ['date', 'datetime', 'time'] if c in h.columns), None)
             
             if date_col:
                 h = h.rename(columns={date_col: 'time'})
                 h['time'] = pd.to_datetime(h['time']).dt.strftime('%Y-%m-%d')
                 
-                # Align marker with closest data point
+                # CRITICAL: Drop rows with missing OHLC data to avoid Component Error
+                h = h.dropna(subset=['open', 'high', 'low', 'close'])
+                
+                # Align marker
                 h_temp = h.copy()
                 h_temp['diff'] = (pd.to_datetime(h_temp['time']) - trade['Date']).abs()
                 marker_time = h_temp.sort_values('diff').iloc[0]['time']
                 
+                # Only pass the exact data needed (no extra math columns)
                 chart_data = h[['time', 'open', 'high', 'low', 'close']].to_dict('records')
-                markers = [{"time": marker_time, "position": "belowBar", "color": "#2196F3", "shape": "arrowUp", "text": "ENTRY"}]
                 
-                renderLightweightCharts([{"type": 'Candlestick', "data": chart_data, "markers": markers}], 'chart')
-                st.info(f"Entry: {trade['Date'].date()} | P&L: ${trade['P&L']:.2f}")
+                markers = [{
+                    "time": str(marker_time), 
+                    "position": "belowBar", 
+                    "color": "#2196F3", 
+                    "shape": "arrowUp", 
+                    "text": "ENTRY"
+                }]
+                
+                # Use a dynamic key based on ticker to force a fresh render
+                renderLightweightCharts(
+                    [{"type": 'Candlestick', "data": chart_data, "markers": markers}], 
+                    key=f"chart_{ticker}_{trade['Date'].strftime('%Y%m%d')}"
+                )
+                
+                st.info(f"Analyzing {ticker} entry on {trade['Date'].date()}")
             else:
-                st.error("Date column missing from price data.")
+                st.error("Format Error: Date column missing from market data.")
         else:
-            st.warning("No price data found.")
+            st.warning(f"No market data found for {yf_ticker}. Market might have been closed or ticker is incorrect.")
     except Exception as e:
-        st.error(f"Chart Load Error: {e}")
+        st.error(f"Technical Error: {e}")
 
 elif menu == "Deep Statistics":
     st.title("Advanced Analytics")
