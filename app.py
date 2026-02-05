@@ -109,64 +109,67 @@ elif menu == "Trade Log":
 
 elif menu == "Trade Analysis":
     st.title("Technical Trade Review")
-    ticker = st.selectbox("Select Ticker", df["Ticker"].unique())
-    trade = df[df["Ticker"] == ticker].iloc[-1]
     
-    yf_ticker = f"{ticker}-USD" if ticker in ["BTC", "ETH", "SOL"] else ticker
+    # 1. Ticker Selection
+    ticker_list = df["Ticker"].unique()
+    ticker = st.selectbox("Select Ticker", ticker_list)
+    
+    # 2. Get the specific trade
+    ticker_trades = df[df["Ticker"] == ticker]
+    trade = ticker_trades.iloc[-1]
+    
+    # 3. Format Ticker for Yahoo Finance
+    yf_ticker = f"{ticker}-USD" if ticker in ["BTC", "ETH", "SOL", "USDT"] else ticker
     
     try:
-        # Fetching a slightly wider window
-        start_date = trade['Date'] - timedelta(days=30)
-        end_date = trade['Date'] + timedelta(days=10)
-        h = yf.download(yf_ticker, start=start_date, end=end_date)
+        # Fetch data with a safe buffer
+        start_date = (trade['Date'] - timedelta(days=30)).strftime('%Y-%m-%d')
+        end_date = (trade['Date'] + timedelta(days=15)).strftime('%Y-%m-%d')
+        
+        h = yf.download(yf_ticker, start=start_date, end=end_date, interval="1d", progress=False)
         
         if not h.empty:
-            if isinstance(h.columns, pd.MultiIndex): 
+            # Flatten columns if MultiIndex (common in new yf versions)
+            if isinstance(h.columns, pd.MultiIndex):
                 h.columns = h.columns.get_level_values(0)
             
             h = h.reset_index()
-            # Clean column names
             h.columns = [str(c).strip().lower() for c in h.columns]
             
-            # Find the date column
+            # Identify Date Column
             date_col = next((c for c in ['date', 'datetime', 'time'] if c in h.columns), None)
             
             if date_col:
-                h = h.rename(columns={date_col: 'time'})
-                h['time'] = pd.to_datetime(h['time']).dt.strftime('%Y-%m-%d')
+                # Prepare data strictly for Lightweight Charts
+                chart_df = h.rename(columns={date_col: 'time'})
+                chart_df['time'] = pd.to_datetime(chart_df['time']).dt.strftime('%Y-%m-%d')
                 
-                # CRITICAL: Drop rows with missing OHLC data to avoid Component Error
-                h = h.dropna(subset=['open', 'high', 'low', 'close'])
+                # Filter out any rows with missing price data
+                chart_df = chart_df.dropna(subset=['open', 'high', 'low', 'close'])
                 
-                # Align marker
-                h_temp = h.copy()
-                h_temp['diff'] = (pd.to_datetime(h_temp['time']) - trade['Date']).abs()
-                marker_time = h_temp.sort_values('diff').iloc[0]['time']
+                # Convert to the list of dicts format the library expects
+                chart_data = chart_df[['time', 'open', 'high', 'low', 'close']].to_dict('records')
                 
-                # Only pass the exact data needed (no extra math columns)
-                chart_data = h[['time', 'open', 'high', 'low', 'close']].to_dict('records')
-                
-                markers = [{
-                    "time": str(marker_time), 
-                    "position": "belowBar", 
-                    "color": "#2196F3", 
-                    "shape": "arrowUp", 
-                    "text": "ENTRY"
-                }]
-                
-                # Use a dynamic key based on ticker to force a fresh render
-                renderLightweightCharts(
-                    [{"type": 'Candlestick', "data": chart_data, "markers": markers}], 
-                    key=f"chart_{ticker}_{trade['Date'].strftime('%Y%m%d')}"
-                )
-                
-                st.info(f"Analyzing {ticker} entry on {trade['Date'].date()}")
+                # Check if we actually have data to show
+                if len(chart_data) > 0:
+                    # Simple call without markers first to verify it works
+                    renderLightweightCharts([
+                        {
+                            "type": 'Candlestick', 
+                            "data": chart_data
+                        }
+                    ], key=f"chart_stable_{ticker}")
+                    
+                    st.success(f"Showing {ticker} chart. Trade Date: {trade['Date'].date()}")
+                else:
+                    st.error("Chart data is empty after processing.")
             else:
-                st.error("Format Error: Date column missing from market data.")
+                st.error("Could not find Date column in price data.")
         else:
-            st.warning(f"No market data found for {yf_ticker}. Market might have been closed or ticker is incorrect.")
+            st.warning(f"No price data returned for {yf_ticker}. The symbol might be delisted or incorrect.")
+            
     except Exception as e:
-        st.error(f"Technical Error: {e}")
+        st.error(f"Chart Load Error: {e}")
 
 elif menu == "Deep Statistics":
     st.title("Advanced Analytics")
