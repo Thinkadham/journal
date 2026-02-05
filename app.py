@@ -40,18 +40,22 @@ st.sidebar.title("💎 AlphaZella Pro")
 uploaded_file = st.sidebar.file_uploader("Upload Trade CSV", type="csv")
 
 if uploaded_file:
-    # Load the data
     df = pd.read_csv(uploaded_file)
+    df.columns = df.columns.str.strip() # Clean headers
     
-    # CLEANING: Remove any leading/trailing spaces from column names
-    df.columns = df.columns.str.strip()
+    # 1. Convert Date
+    df['Date'] = pd.to_datetime(df['Date'])
     
-    # Check if 'Date' exists after cleaning
-    if 'Date' in df.columns:
-        df['Date'] = pd.to_datetime(df['Date'])
-    else:
-        st.error(f"Column 'Date' not found. Available columns: {list(df.columns)}")
-        st.stop()
+    # 2. Calculate P&L if it doesn't exist in the CSV
+    if "P&L" not in df.columns:
+        # P&L Calculation: (Exit - Entry) * Qty (Invert if Short)
+        multiplier = np.where(df["Type"].str.strip().str.capitalize() == "Long", 1, -1)
+        df["P&L"] = (df["Exit"] - df["Entry"]) * df["Quantity"] * multiplier
+    
+    # 3. Calculate Win/Loss Status if it doesn't exist
+    if "Status" not in df.columns:
+        df["Status"] = np.where(df["P&L"] > 0, "Win", "Loss")
+        
 else:
     df = get_mock_data()
 
