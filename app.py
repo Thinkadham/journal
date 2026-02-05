@@ -7,173 +7,111 @@ from datetime import datetime, timedelta
 from streamlit_calendar import calendar
 from streamlit_lightweight_charts import renderLightweightCharts
 
-# --- 1. SETTINGS & STYLING ---
-st.set_page_config(page_title="AlphaZella Pro", layout="wide", initial_sidebar_state="expanded")
+# --- 1. SETTINGS ---
+st.set_page_config(page_title="AlphaZella Pro", layout="wide")
 
-st.markdown("""
-    <style>
-    [data-testid="stMetricValue"] { font-size: 1.8rem; color: #00ffcc; }
-    .stPlotlyChart { border: 1px solid #30363d; border-radius: 10px; }
-    </style>
-    """, unsafe_allow_html=True)
-
-# --- 2. DATA ENGINE ---
+# --- 2. ROBUST DATA PROCESSING ---
 @st.cache_data
-def get_mock_data():
-    data = {
-        "Date": pd.to_datetime(["2024-01-02", "2024-01-03", "2024-01-05", "2024-01-08", "2024-01-10", "2024-01-12"]),
-        "Ticker": ["AAPL", "TSLA", "NVDA", "AMD", "MSFT", "META"],
-        "Type": ["Long", "Short", "Long", "Long", "Short", "Long"],
-        "Entry": [185.20, 245.50, 480.10, 145.00, 390.20, 340.00],
-        "Exit": [190.50, 240.10, 495.00, 142.50, 395.00, 355.00],
-        "Quantity": [100, 50, 20, 100, 30, 40],
-        "Setup": ["Breakout", "Mean Reversion", "Gap Up", "Support Bounce", "Overextended", "Breakout"],
-        "Mistake": ["None", "None", "None", "Early Exit", "FOMO", "None"]
-    }
-    df = pd.DataFrame(data)
-    df["P&L"] = (df["Exit"] - df["Entry"]) * df["Quantity"] * np.where(df["Type"]=="Long", 1, -1)
+def process_data(uploaded_file):
+    if uploaded_file:
+        df = pd.read_csv(uploaded_file)
+    else:
+        # Mock Data as fallback
+        data = {
+            "Date": ["2025-11-03", "2025-11-07", "2025-11-12", "2025-12-10", "2026-01-05"],
+            "Ticker": ["AAPL", "TSLA", "NVDA", "META", "BTC"],
+            "Type": ["Long", "Short", "Long", "Long", "Long"],
+            "Entry": [220.5, 250.0, 140.0, 580.0, 95000.0],
+            "Exit": [235.0, 255.0, 155.0, 560.0, 99000.0],
+            "Quantity": [50, 20, 100, 15, 1],
+            "Setup": ["Breakout", "Overextended", "Gap Up", "Breakout", "Momentum"],
+            "Mistake": ["None", "FOMO", "None", "Revenge", "None"]
+        }
+        df = pd.DataFrame(data)
+
+    # Standardize columns and formats
+    df.columns = df.columns.str.strip()
+    df['Date'] = pd.to_datetime(df['Date'])
+    
+    # Calculate P&L if missing
+    if "P&L" not in df.columns:
+        mult = np.where(df["Type"].str.strip().str.capitalize() == "Long", 1, -1)
+        df["P&L"] = (df["Exit"] - df["Entry"]) * df["Quantity"] * mult
+    
     df["Status"] = np.where(df["P&L"] > 0, "Win", "Loss")
     return df
 
-# --- 3. SIDEBAR & UPLOAD ---
+# --- 3. SIDEBAR ---
 st.sidebar.title("💎 AlphaZella Pro")
-uploaded_file = st.sidebar.file_uploader("Upload Trade CSV", type="csv")
+file = st.sidebar.file_uploader("Upload CSV", type="csv")
+df = process_data(file)
+menu = st.sidebar.radio("Navigate", ["Dashboard", "Calendar", "Trade Log", "Trade Analysis", "Deep Statistics"])
 
-if uploaded_file:
-    df = pd.read_csv(uploaded_file)
-    df.columns = df.columns.str.strip() # Clean headers
-    
-    # 1. Convert Date
-    df['Date'] = pd.to_datetime(df['Date'])
-    
-    # 2. Calculate P&L if it doesn't exist in the CSV
-    if "P&L" not in df.columns:
-        # P&L Calculation: (Exit - Entry) * Qty (Invert if Short)
-        multiplier = np.where(df["Type"].str.strip().str.capitalize() == "Long", 1, -1)
-        df["P&L"] = (df["Exit"] - df["Entry"]) * df["Quantity"] * multiplier
-    
-    # 3. Calculate Win/Loss Status if it doesn't exist
-    if "Status" not in df.columns:
-        df["Status"] = np.where(df["P&L"] > 0, "Win", "Loss")
-        
-else:
-    df = get_mock_data()
+# --- 4. NAVIGATION LOGIC ---
 
-menu = st.sidebar.radio("Navigation", ["Dashboard", "Calendar", "Trade Analysis", "Deep Statistics"])
-
-# --- 4. PAGE: DASHBOARD ---
 if menu == "Dashboard":
     st.title("Performance Dashboard")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Net P&L", f"${df['P&L'].sum():,.2f}")
+    c2.metric("Win Rate", f"{(len(df[df['P&L']>0])/len(df)*100):.1f}%")
+    c3.metric("Total Trades", len(df))
+    c4.metric("Avg Trade", f"${df['P&L'].mean():.2f}")
     
-    col1, col2, col3, col4 = st.columns(4)
-    total_pl = df["P&L"].sum()
-    win_rate = (len(df[df["Status"]=="Win"]) / len(df)) * 100 if len(df) > 0 else 0
-    
-    col1.metric("Net P&L", f"${total_pl:,.2f}", delta=f"{total_pl:.2f}")
-    col2.metric("Win Rate", f"{win_rate:.1f}%")
-    col3.metric("Profit Factor", "2.14")
-    col4.metric("Total Trades", len(df))
-
-    st.subheader("Equity Curve")
     df_sorted = df.sort_values("Date")
     df_sorted["Cum_PL"] = df_sorted["P&L"].cumsum()
-    fig_curve = px.area(df_sorted, x="Date", y="Cum_PL", title="Account Growth",
-                        color_discrete_sequence=['#00ffcc'], template="plotly_dark")
-    st.plotly_chart(fig_curve, use_container_width=True)
+    st.plotly_chart(px.area(df_sorted, x="Date", y="Cum_PL", template="plotly_dark"), use_container_width=True)
 
-# --- 5. PAGE: CALENDAR ---
 elif menu == "Calendar":
-    st.title("Trading Calendar")
-    daily_pl = df.groupby("Date")["P&L"].sum().reset_index()
-    calendar_events = []
-    
+    st.title("Daily P&L Calendar")
+    # Calendar expects specific keys: 'title', 'start', 'allDay'
+    daily_pl = df.groupby(df['Date'].dt.date)['P&L'].sum().reset_index()
+    events = []
     for _, row in daily_pl.iterrows():
-        color = "#2ecc71" if row["P&L"] >= 0 else "#e74c3c"
-        calendar_events.append({
-            "title": f"${row['P&L']:.0f}",
-            "start": row["Date"].strftime("%Y-%m-%d"),
-            "backgroundColor": color,
-            "borderColor": color
+        events.append({
+            "title": f"{'$' if row['P&L'] >= 0 else '-$'}{abs(row['P&L']):.0f}",
+            "start": str(row['Date']),
+            "backgroundColor": "#2ecc71" if row['P&L'] >= 0 else "#e74c3c",
+            "borderColor": "#2ecc71" if row['P&L'] >= 0 else "#e74c3c",
+            "allDay": True
         })
+    calendar(events=events, options={"initialView": "dayGridMonth"})
 
-    cal_options = {"initialView": "dayGridMonth", "selectable": True}
-    calendar(events=calendar_events, options=cal_options)
+elif menu == "Trade Log":
+    st.title("All Trades")
+    st.dataframe(df.sort_values("Date", ascending=False), use_container_width=True)
 
-# --- 6. PAGE: TRADE ANALYSIS ---
 elif menu == "Trade Analysis":
-    st.title("Trade Replay")
-    selected_ticker = st.selectbox("Select Trade", df["Ticker"].unique())
-    # Filter trades for selected ticker and pick the last one
-    ticker_trades = df[df["Ticker"] == selected_ticker]
-    trade = ticker_trades.iloc[-1]
+    st.title("Interactive Trade Review")
+    ticker = st.selectbox("Select Ticker", df["Ticker"].unique())
+    trade = df[df["Ticker"] == ticker].iloc[-1]
     
-    @st.cache_data
-    def fetch_chart(symbol, date):
-        # Fetching data window
-        h = yf.download(symbol, start=date-timedelta(days=15), end=date+timedelta(days=5), interval="1d")
-        
-        # FIX: Flatten MultiIndex columns if they exist
-        if isinstance(h.columns, pd.MultiIndex):
-            h.columns = h.columns.get_level_values(0)
-            
-        h = h.reset_index()
-        
-        # Ensure column names are strings before calling .lower()
-        h.columns = [str(c).lower() for c in h.columns]
-        
-        h = h.rename(columns={'date': 'time'})
-        h['time'] = h['time'].dt.strftime('%Y-%m-%d')
-        return h.to_dict('records')
-
     try:
-        chart_data = fetch_chart(selected_ticker, trade["Date"])
+        # Get chart data
+        h = yf.download(ticker, start=trade['Date']-timedelta(days=20), end=trade['Date']+timedelta(days=10))
+        if isinstance(h.columns, pd.MultiIndex): h.columns = h.columns.get_level_values(0)
+        h = h.reset_index()
+        h.columns = [str(c).lower() for c in h.columns]
+        chart_data = h.rename(columns={'date': 'time'}).to_dict('records')
         
-        markers = [{
-            "time": trade["Date"].strftime("%Y-%m-%d"),
-            "position": "belowBar" if trade["Type"]=="Long" else "aboveBar",
-            "color": "#2196F3" if trade["Type"]=="Long" else "#e91e63",
-            "shape": "arrowUp" if trade["Type"]=="Long" else "arrowDown",
-            "text": f"ENTRY: {trade['Entry']}"
-        }]
+        # Fixed component call
+        renderLightweightCharts([{"type": 'Candlestick', "data": chart_data}], 'chart', height=400)
+        st.success(f"Trade Detail: {trade['Type']} {ticker} for ${trade['P&L']:.2f}")
+    except:
+        st.warning("Could not load market data for this ticker.")
 
-        renderLightweightCharts([{"type": 'Candlestick', "data": chart_data, "markers": markers}], 'chart')
-        st.info(f"Setup: {trade['Setup']} | Mistake: {trade['Mistake']}")
-    except Exception as e:
-        st.error(f"Chart error: {e}")
-
-# --- 7. PAGE: DEEP STATISTICS ---
-elif menu == "Statistics":
-    st.title("Deep Statistics")
+elif menu == "Deep Statistics":
+    st.title("Strategy Analytics")
+    col_l, col_r = st.columns(2)
     
-    c1, c2, c3 = st.columns(3)
-    avg_pl = df["P&L"].mean()
-    std_pl = df["P&L"].std()
-    sharpe = (avg_pl / std_pl) if (not pd.isna(std_pl) and std_pl > 0) else 0
-    
-    wins = df[df["P&L"] > 0]["P&L"].sum()
-    losses = abs(df[df["P&L"] < 0]["P&L"].sum())
-    pf = wins/losses if losses != 0 else wins
-
-    c1.metric("Sharpe Ratio", f"{sharpe:.2f}")
-    c2.metric("Profit Factor", f"{pf:.2f}")
-    c3.metric("Avg Trade", f"${avg_pl:.2f}")
-
-    st.divider()
-    col_a, col_b = st.columns(2)
-    
-    with col_a:
+    with col_l:
         st.subheader("Performance by Setup")
-        setup_data = df.groupby("Setup")["P&L"].sum().reset_index()
-        fig_setup = px.bar(setup_data, x="Setup", y="P&L", color="P&L", 
-                           color_continuous_scale='RdYlGn', template="plotly_dark")
-        st.plotly_chart(fig_setup, use_container_width=True)
-
-    with col_b:
-        st.subheader("Impact of Mistakes")
-        mistake_df = df[df["Mistake"] != "None"]
-        if not mistake_df.empty:
-            fig_mistake = px.treemap(mistake_df, path=['Mistake'], values=abs(mistake_df['P&L']),
-                                    color='P&L', color_continuous_scale='RdBu', template="plotly_dark")
-            st.plotly_chart(fig_mistake, use_container_width=True)
+        fig = px.bar(df.groupby("Setup")["P&L"].sum().reset_index(), x="Setup", y="P&L", color="P&L", template="plotly_dark")
+        st.plotly_chart(fig, use_container_width=True)
+        
+    with col_r:
+        st.subheader("Mistake Costs")
+        mistakes = df[df["Mistake"] != "None"]
+        if not mistakes.empty:
+            st.plotly_chart(px.pie(mistakes, values=abs(mistakes['P&L']), names='Mistake', template="plotly_dark"), use_container_width=True)
         else:
-            st.success("No mistakes logged! Trading discipline is high.")
+            st.info("No mistakes logged yet!")
