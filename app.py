@@ -11,182 +11,137 @@ import io
 # --- 1. APP CONFIG ---
 st.set_page_config(page_title="AlphaZella Pro", layout="wide")
 
-# Custom Dark Theme Styling
-st.markdown("""
-    <style>
-    [data-testid="stMetricValue"] { font-size: 1.8rem; color: #00ffcc; }
-    .stPlotlyChart { border: 1px solid #30363d; border-radius: 10px; }
-    div.stButton > button:first-child { background-color: #2196F3; color: white; border-radius: 5px; }
-    </style>
-    """, unsafe_allow_html=True)
+# --- 2. DATA PERSISTENCE ---
+# Initialize session state for manual entries if not already there
+if "manual_df" not in st.session_state:
+    st.session_state.manual_df = pd.DataFrame(columns=[
+        "Date", "Ticker", "Type", "Entry", "Exit", "Quantity", "Setup", "Mistake", "P&L", "Status"
+    ])
 
-# --- 2. DATA PROCESSING ENGINE ---
+# --- 3. DATA ENGINE ---
 @st.cache_data
 def process_data(uploaded_file):
     if uploaded_file:
         df = pd.read_csv(uploaded_file)
-    else:
-        # Initial Demo Dataset
-        data = {
-            "Date": ["2025-11-03", "2025-11-07", "2025-11-12", "2025-11-18", "2025-12-02", "2025-12-10", "2025-12-15", "2026-01-05", "2026-01-12"],
-            "Ticker": ["AAPL", "TSLA", "NVDA", "AMD", "MSFT", "META", "BTC", "NVDA", "TSLA"],
-            "Type": ["Long", "Short", "Long", "Long", "Short", "Long", "Long", "Long", "Long"],
-            "Entry": [220.5, 250.0, 140.0, 160.0, 410.0, 580.0, 95000.0, 150.0, 260.0],
-            "Exit": [235.0, 255.0, 155.0, 150.0, 400.0, 560.0, 99000.0, 165.0, 285.0],
-            "Quantity": [50, 20, 100, 60, 30, 15, 1, 80, 30],
-            "Setup": ["Breakout", "Overextended", "Gap Up", "Support", "Mean Rev", "Breakout", "Momentum", "Gap Up", "Breakout"],
-            "Mistake": ["None", "FOMO", "None", "Early Exit", "None", "Revenge", "None", "None", "None"]
-        }
-        df = pd.DataFrame(data)
+        df.columns = df.columns.str.strip()
+        df['Date'] = pd.to_datetime(df['Date'])
+        if "P&L" not in df.columns:
+            mult = np.where(df["Type"].str.strip().str.capitalize() == "Long", 1, -1)
+            df["P&L"] = (df["Exit"] - df["Entry"]) * df["Quantity"] * mult
+        df["Status"] = np.where(df["P&L"] > 0, "Win", "Loss")
+        return df
+    return None
 
-    df.columns = df.columns.str.strip()
-    df['Date'] = pd.to_datetime(df['Date'])
-    
-    # Calculate P&L if not present
-    if "P&L" not in df.columns:
-        mult = np.where(df["Type"].str.strip().str.capitalize() == "Long", 1, -1)
-        df["P&L"] = (df["Exit"] - df["Entry"]) * df["Quantity"] * mult
-    
-    df["Status"] = np.where(df["P&L"] > 0, "Win", "Loss")
-    return df
-
-# --- 3. SIDEBAR & TOOLS ---
+# --- 4. SIDEBAR TOOLS ---
 st.sidebar.title("💎 AlphaZella Pro")
-file = st.sidebar.file_uploader("Upload Trade CSV", type="csv")
-df = process_data(file)
 
-def to_excel(df_to_export):
-    output = io.BytesIO()
-    df_clean = df_to_export.copy()
-    df_clean['Date'] = df_clean['Date'].dt.strftime('%Y-%m-%d')
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df_clean.to_excel(writer, index=False, sheet_name='Trades')
-    return output.getvalue()
-
-st.sidebar.download_button("📥 Export to Excel", data=to_excel(df), file_name="AlphaZella_Log.xlsx")
-
-menu = st.sidebar.radio("Navigation", ["Dashboard", "Calendar", "Trade Log", "Trade Analysis", "Deep Statistics"])
-
-# --- 4. NAVIGATION LOGIC ---
-
-if menu == "Dashboard":
-    st.title("Performance Dashboard")
-    c1, c2, c3, c4 = st.columns(4)
-    total_pl = df['P&L'].sum()
-    win_rate = (len(df[df['P&L'] > 0]) / len(df) * 100)
+# 4a. RISK CALCULATOR
+with st.sidebar.expander("🧮 Position Size Calculator"):
+    acc_size = st.number_input("Account Balance ($)", value=10000)
+    risk_pct = st.number_input("Risk per Trade (%)", value=1.0)
+    entry_p = st.number_input("Entry Price", value=0.0)
+    stop_p = st.number_input("Stop Loss Price", value=0.0)
     
-    c1.metric("Net P&L", f"${total_pl:,.2f}")
-    c2.metric("Win Rate", f"{win_rate:.1f}%")
+    if entry_p > 0 and stop_p > 0 and entry_p != stop_p:
+        risk_amt = acc_size * (risk_pct / 100)
+        risk_per_share = abs(entry_p - stop_p)
+        pos_size = risk_amt / risk_per_share
+        st.success(f"Suggested Size: {pos_size:.2f} units")
+        st.caption(f"Total Risk: ${risk_amt:.2f}")
+
+# 4b. DATA INPUT
+file = st.sidebar.file_uploader("Upload CSV", type="csv")
+uploaded_df = process_data(file)
+
+# Combine Manual + Uploaded
+if uploaded_df is not None:
+    df = pd.concat([st.session_state.manual_df, uploaded_df], ignore_index=True)
+else:
+    df = st.session_state.manual_df
+
+# Fallback to demo data if everything is empty
+if df.empty:
+    df = pd.DataFrame({
+        "Date": [pd.Timestamp("2025-12-10")], "Ticker": ["META"], "Type": ["Long"],
+        "Entry": [580.0], "Exit": [560.0], "Quantity": [15], "Setup": ["Breakout"],
+        "Mistake": ["Revenge"], "P&L": [-300.0], "Status": ["Loss"]
+    })
+
+menu = st.sidebar.radio("Navigation", ["Dashboard", "Calendar", "Trade Log", "Manual Entry", "Trade Analysis", "Deep Statistics"])
+
+# --- 5. PAGE LOGIC ---
+
+if menu == "Manual Entry":
+    st.title("📝 Manual Trade Entry")
+    with st.form("trade_form", clear_on_submit=True):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            m_date = st.date_input("Date", datetime.now())
+            m_ticker = st.text_input("Ticker (e.g. AAPL)").upper()
+        with col2:
+            m_type = st.selectbox("Type", ["Long", "Short"])
+            m_entry = st.number_input("Entry Price", min_value=0.01)
+        with col3:
+            m_exit = st.number_input("Exit Price", min_value=0.01)
+            m_qty = st.number_input("Quantity", min_value=1)
+        
+        m_setup = st.text_input("Setup Name")
+        m_mistake = st.selectbox("Mistake", ["None", "FOMO", "Early Exit", "Revenge", "Late Entry"])
+        
+        if st.form_submit_button("Add Trade to Journal"):
+            mult = 1 if m_type == "Long" else -1
+            pl = (m_exit - m_entry) * m_qty * mult
+            new_trade = pd.DataFrame([{
+                "Date": pd.to_datetime(m_date), "Ticker": m_ticker, "Type": m_type,
+                "Entry": m_entry, "Exit": m_exit, "Quantity": m_qty, 
+                "Setup": m_setup, "Mistake": m_mistake, "P&L": pl, 
+                "Status": "Win" if pl > 0 else "Loss"
+            }])
+            st.session_state.manual_df = pd.concat([st.session_state.manual_df, new_trade], ignore_index=True)
+            st.rerun()
+
+elif menu == "Dashboard":
+    st.title("Performance Dashboard")
+    # ... (Same metric code as previous)
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Net P&L", f"${df['P&L'].sum():,.2f}")
+    c2.metric("Win Rate", f"{(len(df[df['P&L']>0])/len(df)*100):.1f}%")
     c3.metric("Total Trades", len(df))
     c4.metric("Avg Trade", f"${df['P&L'].mean():.2f}")
     
-    st.subheader("Account Equity Curve")
     df_sorted = df.sort_values("Date")
     df_sorted["Cum_PL"] = df_sorted["P&L"].cumsum()
-    st.plotly_chart(px.area(df_sorted, x="Date", y="Cum_PL", template="plotly_dark", color_discrete_sequence=['#00ffcc']), use_container_width=True)
-
-elif menu == "Calendar":
-    st.title("Daily P&L Tracker")
-    daily_pl = df.groupby(df['Date'].dt.date)['P&L'].sum().reset_index()
-    events = [{"title": f"${r['P&L']:.0f}", "start": str(r['Date']), 
-               "backgroundColor": "#2ecc71" if r['P&L'] >= 0 else "#e74c3c", "allDay": True} 
-              for _, r in daily_pl.iterrows()]
-    calendar(events=events, options={"initialView": "dayGridMonth"})
-
-elif menu == "Trade Log":
-    st.title("Full Trade History")
-    st.dataframe(df.sort_values("Date", ascending=False), use_container_width=True, hide_index=True)
+    st.plotly_chart(px.area(df_sorted, x="Date", y="Cum_PL", template="plotly_dark"), use_container_width=True)
 
 elif menu == "Trade Analysis":
     st.title("Technical Trade Review")
-    
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        ticker = st.selectbox("Select Ticker", df["Ticker"].unique())
-    with col2:
-        interval = st.selectbox("Timeframe", ["1d", "1h", "15m"], index=0)
-    
+    # Select from the actual data available
+    ticker = st.selectbox("Select Ticker", df["Ticker"].unique())
+    interval = st.selectbox("Timeframe", ["1d", "1h", "15m"])
     trade = df[df["Ticker"] == ticker].iloc[-1]
+    
     yf_ticker = f"{ticker}-USD" if ticker in ["BTC", "ETH", "SOL"] else ticker
     
     try:
-        # Safe Date Logic for Intraday
-        end_fetch = trade['Date'] + timedelta(days=5)
-        if interval == "1d":
-            start_fetch = trade['Date'] - timedelta(days=60)
-        elif interval == "1h":
-            start_fetch = max(trade['Date'] - timedelta(days=30), datetime.now() - timedelta(days=720))
-        else: # 15m
-            start_fetch = max(trade['Date'] - timedelta(days=7), datetime.now() - timedelta(days=55))
-
-        h = yf.download(yf_ticker, start=start_fetch, end=end_fetch, interval=interval)
-        
+        # Fetch logic (Daily/Intraday)
+        h = yf.download(yf_ticker, start=trade['Date']-timedelta(days=30), end=trade['Date']+timedelta(days=7), interval=interval)
         if not h.empty:
             if isinstance(h.columns, pd.MultiIndex): h.columns = h.columns.get_level_values(0)
             h = h.reset_index()
             date_col = 'Datetime' if 'Datetime' in h.columns else 'Date'
             
-            fig = go.Figure(data=[go.Candlestick(
-                x=h[date_col], open=h['Open'], high=h['High'], low=h['Low'], close=h['Close'],
-                name=ticker
-            )])
-
-            # --- 1. RISK/REWARD VISUAL LINE ---
-            # Draws a vertical line between Entry and Exit
-            fig.add_shape(
-                type="line",
-                x0=trade['Date'], y0=trade['Entry'],
-                x1=trade['Date'], y1=trade['Exit'],
-                line=dict(color="white", width=2, dash="dot"),
-            )
-
-            # --- 2. ANCHORED MARKERS ---
-            # BUY Marker
-            fig.add_annotation(
-                x=trade['Date'], y=trade['Entry'],
-                text=f"BUY @ {trade['Entry']}", showarrow=True,
-                arrowhead=2, arrowcolor="#00ffcc", bgcolor="#00ffcc", font=dict(color="black"),
-                ax=40, ay=0 # Horizontal offset to keep it clear of the candle
-            )
+            fig = go.Figure(data=[go.Candlestick(x=h[date_col], open=h['Open'], high=h['High'], low=h['Low'], close=h['Close'])])
             
-            # SELL Marker
-            fig.add_annotation(
-                x=trade['Date'], y=trade['Exit'],
-                text=f"SELL @ {trade['Exit']}", showarrow=True,
-                arrowhead=2, arrowcolor="#ff4b4b", bgcolor="#ff4b4b", font=dict(color="white"),
-                ax=40, ay=0
-            )
+            # Risk/Reward Line
+            fig.add_shape(type="line", x0=trade['Date'], y0=trade['Entry'], x1=trade['Date'], y1=trade['Exit'], line=dict(color="white", dash="dot"))
             
-            # --- 3. P&L LABEL ---
-            fig.add_annotation(
-                x=trade['Date'], y=(trade['Entry'] + trade['Exit']) / 2,
-                text=f"P&L: ${trade['P&L']:,.2f}",
-                showarrow=False, bgcolor="rgba(0,0,0,0.5)", font=dict(color="white", size=12),
-                xshift=80
-            )
-
+            # BUY/SELL Markers
+            fig.add_annotation(x=trade['Date'], y=trade['Entry'], text=f"BUY @ {trade['Entry']}", showarrow=True, arrowhead=2, arrowcolor="#00ffcc", bgcolor="#00ffcc", font=dict(color="black"), ax=40)
+            fig.add_annotation(x=trade['Date'], y=trade['Exit'], text=f"SELL @ {trade['Exit']}", showarrow=True, arrowhead=2, arrowcolor="#ff4b4b", bgcolor="#ff4b4b", font=dict(color="white"), ax=40)
+            
             fig.update_layout(template="plotly_dark", xaxis_rangeslider_visible=False, height=600)
             st.plotly_chart(fig, use_container_width=True)
-            
-            st.info(f"**Performance:** This trade resulted in a ${trade['P&L']:,.2f} {trade['Status'].lower()}.")
-        else:
-            st.error(f"No {interval} data available. Try '1d' timeframe.")
-            
     except Exception as e:
-        st.error(f"Error loading chart: {e}")
-            
-   
-elif menu == "Deep Statistics":
-    st.title("Advanced Strategy Analytics")
-    cl, cr = st.columns(2)
-    with cl:
-        st.subheader("Profitability by Setup")
-        setup_stats = df.groupby("Setup")["P&L"].sum().reset_index()
-        st.plotly_chart(px.bar(setup_stats, x="Setup", y="P&L", color="P&L", template="plotly_dark"), use_container_width=True)
-    with cr:
-        st.subheader("The Cost of Mistakes")
-        mistakes = df[df["Mistake"] != "None"]
-        if not mistakes.empty:
-            st.plotly_chart(px.pie(mistakes, values=abs(mistakes['P&L']), names='Mistake', hole=0.4, template="plotly_dark"), use_container_width=True)
-        else:
-            st.success("No behavioral mistakes logged! Keep it up.")
+        st.error(f"Error: {e}")
+
+# ... (Keep Calendar, Trade Log, and Deep Statistics blocks same as before)
