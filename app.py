@@ -114,32 +114,71 @@ elif menu == "Trade Log":
 
 elif menu == "Trade Analysis":
     st.title("📊 Technical Review")
-    if df.empty: st.warning("Add trades to see charts.")
+    if df.empty: 
+        st.warning("Add trades to see charts.")
     else:
+        # 1. Selection UI
         tick = st.selectbox("Select Ticker", df["Ticker"].unique())
         tf = st.selectbox("Timeframe", ["1d", "1h", "15m"])
+        
+        # Get the specific trade details
         tr = df[df["Ticker"] == tick].iloc[-1]
         
-        # Proper ticker cleaning for Yahoo
-        yf_t = f"{tick}-USD" if tick in ["BTC", "ETH", "SOL"] else tick
+        # 2. TICKER CLEANING (The "Secret Sauce")
+        # Handles Crypto, Stocks, and removes any accidental spaces
+        yf_t = str(tick).strip().upper()
+        if yf_t in ["BTC", "ETH", "SOL", "BNB", "XRP", "ADA"]:
+            yf_t = f"{yf_t}-USD"
         
         try:
-            h = yf.download(yf_t, start=tr['Date']-timedelta(days=25), end=tr['Date']+timedelta(days=7), interval=tf)
+            # 3. EXPANDED SEARCH WINDOW
+            # We look back further to ensure we catch enough candles to fill the screen
+            start_date = tr['Date'] - timedelta(days=40)
+            end_date = tr['Date'] + timedelta(days=10)
+            
+            with st.spinner(f"Fetching {yf_t} market data..."):
+                h = yf.download(yf_t, start=start_date, end=end_date, interval=tf, progress=False)
+            
             if not h.empty:
+                # Handle Multi-index columns if they exist in newer yfinance versions
+                if isinstance(h.columns, pd.MultiIndex):
+                    h.columns = h.columns.get_level_values(0)
+                
                 h = h.reset_index()
-                d_c = 'Datetime' if 'Datetime' in h.columns else 'Date'
-                fig = go.Figure(data=[go.Candlestick(x=h[d_c], open=h['Open'], high=h['High'], low=h['Low'], close=h['Close'])])
+                # Find the date/time column dynamically
+                d_c = next((col for col in h.columns if col in ['Date', 'Datetime']), h.columns[0])
+                
+                # 4. BUILD THE CHART
+                fig = go.Figure(data=[go.Candlestick(
+                    x=h[d_c], 
+                    open=h['Open'], 
+                    high=h['High'], 
+                    low=h['Low'], 
+                    close=h['Close'],
+                    name=yf_t
+                )])
                 
                 # Risk/Reward Line (White dotted)
-                fig.add_shape(type="line", x0=tr['Date'], y0=tr['Entry'], x1=tr['Date'], y1=tr['Exit'], line=dict(color="white", width=2, dash="dot"))
+                fig.add_shape(type="line", x0=tr['Date'], y0=tr['Entry'], x1=tr['Date'], y1=tr['Exit'],
+                              line=dict(color="white", width=2, dash="dot"))
                 
+                # BUY/SELL Annotations
                 fig.add_annotation(x=tr['Date'], y=tr['Entry'], text="BUY", arrowhead=1, bgcolor="#00ffcc", font=dict(color="black"))
                 fig.add_annotation(x=tr['Date'], y=tr['Exit'], text="SELL", arrowhead=1, bgcolor="#ff4b4b")
                 
-                fig.update_layout(template="plotly_dark", xaxis_rangeslider_visible=False, height=600)
+                fig.update_layout(
+                    template="plotly_dark", 
+                    xaxis_rangeslider_visible=False, 
+                    height=650,
+                    margin=dict(l=10, r=10, t=10, b=10)
+                )
                 st.plotly_chart(fig, use_container_width=True)
-            else: st.error("No market data found for this period.")
-        except Exception as e: st.error(f"Chart Error: {e}")
+                
+                st.info(f"Analysis for {yf_t} | Trade Date: {tr['Date'].date()}")
+            else: 
+                st.error(f"No market data found for {yf_t}. Please check if the ticker symbol is correct.")
+        except Exception as e: 
+            st.error(f"Chart Render Error: {e}")
 
 elif menu == "Deep Statistics":
     st.title("📈 Analytics")
