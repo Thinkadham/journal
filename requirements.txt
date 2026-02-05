@@ -6,3 +6,4 @@ yfinance
 streamlit-calendar
 streamlit-lightweight-charts
 xlsxwriter
+supabase
