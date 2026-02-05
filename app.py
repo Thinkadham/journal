@@ -117,49 +117,50 @@ elif menu == "Trade Analysis":
     # Ticker format fix for Crypto
     yf_ticker = f"{ticker}-USD" if ticker in ["BTC", "ETH", "SOL"] else ticker
     
-   try:
-        start_date = trade['Date'] - timedelta(days=25)
-        end_date = trade['Date'] + timedelta(days=10)
-        h = yf.download(yf_ticker, start=start_date, end=end_date)
+try:
+    start_date = trade['Date'] - timedelta(days=25)
+    end_date = trade['Date'] + timedelta(days=10)
+    h = yf.download(yf_ticker, start=start_date, end=end_date)
         
-        if not h.empty:
-            # 1. Handle Multi-Index columns from new yfinance versions
-            if isinstance(h.columns, pd.MultiIndex):
-                h.columns = h.columns.get_level_values(0)
+ if not h.empty:
+    # 1. Handle Multi-Index columns from new yfinance versions
+     if isinstance(h.columns, pd.MultiIndex):
+        h.columns = h.columns.get_level_values(0)
             
-            # 2. Reset index to turn 'Date' (index) into a column
-            h = h.reset_index()
+    # 2. Reset index to turn 'Date' (index) into a column
+        h = h.reset_index()
             
-            # 3. Clean column names (strip spaces and lowercase)
-            h.columns = [str(c).strip().lower() for c in h.columns]
+    # 3. Clean column names (strip spaces and lowercase)
+        h.columns = [str(c).strip().lower() for c in h.columns]
             
-            # 4. CRITICAL FIX: Find the date column regardless of name
-            # yfinance usually returns 'date', but sometimes 'datetime'
-            date_col = None
-            for col in ['date', 'datetime', 'time']:
-                if col in h.columns:
-                    date_col = col
-                    break
+     # 4. CRITICAL FIX: Find the date column regardless of name
+    # yfinance usually returns 'date', but sometimes 'datetime'
+        date_col = None
+        for col in ['date', 'datetime', 'time']:
+             if col in h.columns:
+                date_col = col
+                 break
             
-            if date_col:
-                h = h.rename(columns={date_col: 'time'})
-                # Lightweight charts needs 'time' in YYYY-MM-DD string format
-                h['time'] = pd.to_datetime(h['time']).dt.strftime('%Y-%m-%d')
+        if date_col:
+             h = h.rename(columns={date_col: 'time'})
+            # Lightweight charts needs 'time' in YYYY-MM-DD string format
+            h['time'] = pd.to_datetime(h['time']).dt.strftime('%Y-%m-%d')
                 
-                # Find closest date to trade for the marker
-                h_temp = h.copy()
-                h_temp['diff'] = (pd.to_datetime(h_temp['time']) - trade['Date']).abs()
-                marker_time = h_temp.sort_values('diff').iloc[0]['time']
+            # Find closest date to trade for the marker
+             h_temp = h.copy()
+            h_temp['diff'] = (pd.to_datetime(h_temp['time']) - trade['Date']).abs()
+             marker_time = h_temp.sort_values('diff').iloc[0]['time']
                 
-                chart_data = h[['time', 'open', 'high', 'low', 'close']].to_dict('records')
-                markers = [{"time": marker_time, "position": "belowBar", "color": "#2196F3", "shape": "arrowUp", "text": "ENTRY"}]
+             chart_data = h[['time', 'open', 'high', 'low', 'close']].to_dict('records')
+            markers = [{"time": marker_time, "position": "belowBar", "color": "#2196F3", "shape": "arrowUp", "text": "ENTRY"}]
                 
-                renderLightweightCharts([{"type": 'Candlestick', "data": chart_data, "markers": markers}], 'chart', height=500)
-                st.info(f"Entry on {trade['Date'].date()} | P&L: ${trade['P&L']:.2f} | Setup: {trade['Setup']}")
-            else:
-                st.error("Could not find a valid Date column in market data.")
+            renderLightweightCharts([{"type": 'Candlestick', "data": chart_data, "markers": markers}], 'chart', height=500)
+            st.info(f"Entry on {trade['Date'].date()} | P&L: ${trade['P&L']:.2f} | Setup: {trade['Setup']}")
+        else:
+            st.error("Could not find a valid Date column in market data.")
         else:
             st.warning("No price data found for this ticker/date range.")
+            
     except Exception as e:
         st.error(f"Chart Load Error: {e}")
 
