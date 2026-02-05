@@ -89,11 +89,13 @@ elif menu == "Calendar":
 elif menu == "Trade Analysis":
     st.title("Trade Replay")
     selected_ticker = st.selectbox("Select Trade", df["Ticker"].unique())
-    trade = df[df["Ticker"] == selected_ticker].iloc[-1] # Get most recent for that ticker
+    # Filter trades for selected ticker and pick the last one
+    ticker_trades = df[df["Ticker"] == selected_ticker]
+    trade = ticker_trades.iloc[-1]
     
     @st.cache_data
     def fetch_chart(symbol, date):
-        # Fetch a window around the trade date
+        # Fetching data window
         h = yf.download(symbol, start=date-timedelta(days=15), end=date+timedelta(days=5), interval="1d")
         h = h.reset_index()
         h.columns = [c.lower() for c in h.columns]
@@ -124,7 +126,7 @@ elif menu == "Statistics":
     c1, c2, c3 = st.columns(3)
     avg_pl = df["P&L"].mean()
     std_pl = df["P&L"].std()
-    sharpe = (avg_pl / std_pl) if std_pl > 0 else 0
+    sharpe = (avg_pl / std_pl) if (not pd.isna(std_pl) and std_pl > 0) else 0
     
     wins = df[df["P&L"] > 0]["P&L"].sum()
     losses = abs(df[df["P&L"] < 0]["P&L"].sum())
@@ -138,4 +140,18 @@ elif menu == "Statistics":
     col_a, col_b = st.columns(2)
     
     with col_a:
-        st.subheader("P
+        st.subheader("Performance by Setup")
+        setup_data = df.groupby("Setup")["P&L"].sum().reset_index()
+        fig_setup = px.bar(setup_data, x="Setup", y="P&L", color="P&L", 
+                           color_continuous_scale='RdYlGn', template="plotly_dark")
+        st.plotly_chart(fig_setup, use_container_width=True)
+
+    with col_b:
+        st.subheader("Impact of Mistakes")
+        mistake_df = df[df["Mistake"] != "None"]
+        if not mistake_df.empty:
+            fig_mistake = px.treemap(mistake_df, path=['Mistake'], values=abs(mistake_df['P&L']),
+                                    color='P&L', color_continuous_scale='RdBu', template="plotly_dark")
+            st.plotly_chart(fig_mistake, use_container_width=True)
+        else:
+            st.success("No mistakes logged! Trading discipline is high.")
