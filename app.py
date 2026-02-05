@@ -122,7 +122,7 @@ try:
     end_date = trade['Date'] + timedelta(days=10)
     h = yf.download(yf_ticker, start=start_date, end=end_date)
         
- if not h.empty:
+if not h.empty:
     # 1. Handle Multi-Index columns from new yfinance versions
      if isinstance(h.columns, pd.MultiIndex):
         h.columns = h.columns.get_level_values(0)
