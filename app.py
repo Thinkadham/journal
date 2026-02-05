@@ -147,5 +147,68 @@ elif menu == "Calendar":
         evts = [{"title": f"${r['p_l']:.0f}", "start": str(r['date']), "backgroundColor": "#2ecc71" if r['p_l'] >= 0 else "#e74c3c"} for _, r in daily.iterrows()]
         calendar(events=evts, options={"initialView": "dayGridMonth"})
 
+elif menu == "Deep Statistics":
+    st.title("📈 Advanced Analytics")
+    
+    if all_trades.empty:
+        st.info("No data available in Supabase. Log some trades to see your deep stats.")
+    else:
+        # 1. Strategy Efficiency Table
+        st.subheader("Strategy Performance Report")
+        # Aggregating data based on Supabase column names
+        stats = all_trades.groupby("setup").agg({
+            'p_l': ['sum', 'count', 'mean'],
+            'status': lambda x: (x == 'Win').sum()
+        })
+        
+        # Cleaning up the multi-index columns
+        stats.columns = ['Total P&L', 'Trade Count', 'Average P&L', 'Wins']
+        stats['Win Rate'] = (stats['Wins'] / stats['Trade Count'] * 100).map('{:.1f}%'.format)
+        
+        # Display the table with color formatting
+        st.table(stats[['Total P&L', 'Trade Count', 'Win Rate', 'Average P&L']].style.highlight_max(axis=0, color='#1e3d33'))
+
+        # 2. Visualizations
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader("Profitability by Setup")
+            setup_fig = px.bar(
+                all_trades.groupby("setup")["p_l"].sum().reset_index(),
+                x="setup", 
+                y="p_l", 
+                color="p_l",
+                color_continuous_scale='RdYlGn',
+                template="plotly_dark"
+            )
+            st.plotly_chart(setup_fig, use_container_width=True)
+            
+        with col2:
+            st.subheader("Mistake Distribution")
+            # Analyze which mistakes are costing the most money
+            mistake_fig = px.pie(
+                all_trades, 
+                values=all_trades['p_l'].abs(), 
+                names='mistake',
+                hole=0.4,
+                template="plotly_dark",
+                color_discrete_sequence=px.colors.sequential.Reds_r
+            )
+            st.plotly_chart(mistake_fig, use_container_width=True)
+
+        # 3. Ticker Heatmap
+        st.subheader("Ticker Volume vs. Profit")
+        ticker_fig = px.scatter(
+            all_trades.groupby("ticker").agg({'p_l': 'sum', 'quantity': 'count'}).reset_index(),
+            x="quantity",
+            y="p_l",
+            size="quantity",
+            color="p_l",
+            text="ticker",
+            labels={'quantity': 'Number of Trades', 'p_l': 'Total Profit/Loss'},
+            template="plotly_dark"
+        )
+        st.plotly_chart(ticker_fig, use_container_width=True)
+
 st.sidebar.markdown("---")
 st.sidebar.write("© Th!nkSolution")
